@@ -16,6 +16,7 @@ class ActivityConfigSet extends MooshCommand
         parent::__construct('config-set', 'activity');
 
         $this->addOption('s|sectionnumber:=number', 'sectionnumber', null);
+        $this->addOption('u|update-events', 'Update matching dashboard events');
 
         $this->addArgument('mode');
         $this->addArgument('id');
@@ -78,10 +79,41 @@ class ActivityConfigSet extends MooshCommand
     private function setActivitySetting($modulename,$activityid,$setting,$value) {
 
         global $DB;
+        global $CFG;
+        require_once($CFG->dirroot . '/course/lib.php');
+        require_once($CFG->dirroot . '/calendar/lib.php');
 
         if ($DB->set_field($modulename,$setting,$value,array('id'=>$activityid))) {
             echo "OK - Set $setting='$value' ($modulename activityid={$activityid})\n";
-            return true;
+
+	    if (!$this->expandedOptions['update-events'])
+		    return true;
+
+	    $select = "modulename = :modulename
+                    AND instance = :instance
+                    AND groupid = 0
+                    AND courseid <> 0";
+	    $cm = get_coursemodule_from_instance($modulename, $activityid);
+	    $event = new \stdClass();
+	    $event->modulename = $modulename;
+	    $event->instance = $cm->instance;
+	    $event->courseid = $cm->course;
+	    $event->timestart = $value;
+	    $event->timesort = $value;
+        $params = array('modulename' => $modulename, 'instance' => $cm->instance/*, 'eventtype' => 'due'*/);
+        $event->id = $DB->get_field_select('event', 'id', $select, $params);
+        if ($event->id)
+	    {
+		    $calendarevent = \calendar_event::load($event->id);
+            if ($calendarevent->update($event, false))
+                echo "OK - Updating calendar event '{$event->id}' with timestart/timesort '{$value}'\n";
+	    }
+	    else
+	    {
+            //TODO: Create event when it doesn't exist - needs some name!
+            // $calendarevent = new \calendar_event();
+        }
+        return true;
         } else {
             echo "ERROR - failed to set $setting='$value' ($modulename activityid={$activityid})\n";
             return false;
