@@ -86,7 +86,7 @@ class ActivityConfigSet extends MooshCommand
         if ($DB->set_field($modulename,$setting,$value,array('id'=>$activityid))) {
             echo "OK - Set $setting='$value' ($modulename activityid={$activityid})\n";
 
-        if (!$this->expandedOptions['update-events'])
+        if (!$this->expandedOptions['update-events'] || $modulename == "course_modules")
             return true;
 
         $select = "modulename = :modulename
