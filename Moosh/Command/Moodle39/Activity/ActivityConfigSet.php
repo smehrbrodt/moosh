@@ -100,7 +100,16 @@ class ActivityConfigSet extends MooshCommand
         $event->courseid = $cm->course;
         $event->timestart = $value;
         $event->timesort = $value;
-        $params = array('modulename' => $modulename, 'instance' => $cm->instance/*, 'eventtype' => 'due'*/);
+        $params = array('modulename' => $modulename, 'instance' => $cm->instance);
+        // An activity can have more than one event (a quiz has 'open' and 'close'). Only look at
+        // the event which belongs to the field we just updated, otherwise we would pick a random
+        // one of them and set the wrong date.
+        $eventtype = $this->getEventType($setting);
+        if ($eventtype) {
+            $select .= "
+                    AND eventtype = :eventtype";
+            $params['eventtype'] = $eventtype;
+        }
         $event->id = $DB->get_field_select('event', 'id', $select, $params);
         if ($event->id)
         {
@@ -119,6 +128,25 @@ class ActivityConfigSet extends MooshCommand
             return false;
         }
 
+    }
+
+    /**
+     * Calendar event type belonging to an activity setting, null if the setting has no event.
+     *
+     * @param string $setting
+     * @return string|null
+     */
+    private function getEventType($setting) {
+        $eventtypes = array(
+            'timeopen' => 'open',        // quiz, feedback, chat, choice, ...
+            'timeclose' => 'close',
+            'available' => 'open',       // lesson
+            'deadline' => 'close',       // lesson
+            'duedate' => 'due',          // assign
+            'gradingduedate' => 'gradingdue',
+        );
+
+        return isset($eventtypes[$setting]) ? $eventtypes[$setting] : null;
     }
 
     protected function getArgumentsHelp()
