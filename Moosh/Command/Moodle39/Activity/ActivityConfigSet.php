@@ -129,7 +129,7 @@ class ActivityConfigSet extends MooshCommand
      * @param \stdClass $cm course module, as returned by get_coursemodule_from_*()
      */
     private function refreshModuleEvents($cm) {
-        global $CFG;
+        global $CFG, $DB;
 
         require_once($CFG->dirroot . '/mod/' . $cm->modname . '/lib.php');
         $refreshevents = $cm->modname . '_refresh_events';
@@ -137,7 +137,10 @@ class ActivityConfigSet extends MooshCommand
             echo "WARNING - {$refreshevents}() does not exist, calendar events not updated\n";
             return;
         }
-        $refreshevents($cm->course, $cm->instance, $cm);
+        // Pass the activity itself and not just its id: Most modules accept both, but some
+        // (mod_forum) insist on the record.
+        $instance = $DB->get_record($cm->modname, array('id' => $cm->instance), '*', MUST_EXIST);
+        $refreshevents((int)$cm->course, $instance, $cm);
         echo "OK - Refreshed calendar events of {$cm->modname} instance {$cm->instance}\n";
 
         // The module only knows about its own events and treats the "expect completed on" event as
