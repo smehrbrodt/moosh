@@ -152,7 +152,10 @@ class ActivityConfigSet extends MooshCommand
      * @param \stdClass $cm course module, as returned by get_coursemodule_from_*()
      */
     private function updateCompletionEvent($cm) {
-        global $DB;
+        global $DB, $CFG;
+
+        // core_completion\api uses completion_info, which is not autoloaded.
+        require_once($CFG->libdir . '/completionlib.php');
 
         $completionexpected = $DB->get_field('course_modules', 'completionexpected',
                 array('id' => $cm->id));
