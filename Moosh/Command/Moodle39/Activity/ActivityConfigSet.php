@@ -76,77 +76,90 @@ class ActivityConfigSet extends MooshCommand
 
     }
 
-    private function setActivitySetting($modulename,$activityid,$setting,$value) {
+    private function setActivitySetting($modulename, $activityid, $setting, $value) {
 
         global $DB;
         global $CFG;
         require_once($CFG->dirroot . '/course/lib.php');
         require_once($CFG->dirroot . '/calendar/lib.php');
 
-        if ($DB->set_field($modulename,$setting,$value,array('id'=>$activityid))) {
-            echo "OK - Set $setting='$value' ($modulename activityid={$activityid})\n";
-
-        if (!$this->expandedOptions['update-events'] || $modulename == "course_modules")
-            return true;
-
-        $select = "modulename = :modulename
-                    AND instance = :instance
-                    AND groupid = 0
-                    AND courseid <> 0";
-        $cm = get_coursemodule_from_instance($modulename, $activityid);
-        $event = new \stdClass();
-        $event->modulename = $modulename;
-        $event->instance = $cm->instance;
-        $event->courseid = $cm->course;
-        $event->timestart = $value;
-        $event->timesort = $value;
-        $params = array('modulename' => $modulename, 'instance' => $cm->instance);
-        // An activity can have more than one event (a quiz has 'open' and 'close'). Only look at
-        // the event which belongs to the field we just updated, otherwise we would pick a random
-        // one of them and set the wrong date.
-        $eventtype = $this->getEventType($setting);
-        if ($eventtype) {
-            $select .= "
-                    AND eventtype = :eventtype";
-            $params['eventtype'] = $eventtype;
-        }
-        $event->id = $DB->get_field_select('event', 'id', $select, $params);
-        if ($event->id)
-        {
-            $calendarevent = \calendar_event::load($event->id);
-            if ($calendarevent->update($event, false))
-                echo "OK - Updating calendar event '{$event->id}' with timestart/timesort '{$value}'\n";
-        }
-        else
-        {
-            //TODO: Create event when it doesn't exist - needs some name!
-            // $calendarevent = new \calendar_event();
-        }
-        return true;
-        } else {
+        if (!$DB->set_field($modulename, $setting, $value, array('id' => $activityid))) {
             echo "ERROR - failed to set $setting='$value' ($modulename activityid={$activityid})\n";
             return false;
         }
+        echo "OK - Set $setting='$value' ($modulename activityid={$activityid})\n";
 
+        if (!$this->expandedOptions['update-events']) {
+            return true;
+        }
+
+        // 'course_modules' is not an activity table: There the id we were given is a course
+        // module id and not an activity instance id, and the only date it holds
+        // ('completionexpected') has an event of its own.
+        if ($modulename == 'course_modules') {
+            $cm = get_coursemodule_from_id('', $activityid);
+            if (!$cm) {
+                echo "WARNING - no course module with id {$activityid}, calendar events not updated\n";
+                return true;
+            }
+            if ($setting == 'completionexpected') {
+                $this->updateCompletionEvent($cm);
+            }
+            return true;
+        }
+
+        $cm = get_coursemodule_from_instance($modulename, $activityid);
+        if (!$cm) {
+            echo "WARNING - no course module for $modulename instance {$activityid}, calendar events not updated\n";
+            return true;
+        }
+        $this->refreshModuleEvents($cm);
+
+        return true;
     }
 
     /**
-     * Calendar event type belonging to an activity setting, null if the setting has no event.
+     * Recreate the calendar events of an activity from its current settings.
      *
-     * @param string $setting
-     * @return string|null
+     * We let the activity module do that itself, the same way Moodle does when the activity is
+     * saved in the UI (see edit_module_post_actions()): The module knows the name and the type of
+     * each of its events, and it also creates events which are still missing and deletes the ones
+     * whose date we just cleared.
+     *
+     * @param \stdClass $cm course module, as returned by get_coursemodule_from_*()
      */
-    private function getEventType($setting) {
-        $eventtypes = array(
-            'timeopen' => 'open',        // quiz, feedback, chat, choice, ...
-            'timeclose' => 'close',
-            'available' => 'open',       // lesson
-            'deadline' => 'close',       // lesson
-            'duedate' => 'due',          // assign
-            'gradingduedate' => 'gradingdue',
-        );
+    private function refreshModuleEvents($cm) {
+        global $CFG;
 
-        return isset($eventtypes[$setting]) ? $eventtypes[$setting] : null;
+        require_once($CFG->dirroot . '/mod/' . $cm->modname . '/lib.php');
+        $refreshevents = $cm->modname . '_refresh_events';
+        if (!function_exists($refreshevents)) {
+            echo "WARNING - {$refreshevents}() does not exist, calendar events not updated\n";
+            return;
+        }
+        $refreshevents($cm->course, $cm->instance, $cm);
+        echo "OK - Refreshed calendar events of {$cm->modname} instance {$cm->instance}\n";
+
+        // The module only knows about its own events and treats the "expect completed on" event as
+        // a leftover of its own, so it deletes it. Moodle has the same problem and solves it by
+        // recreating that event afterwards - so that is what we do, too.
+        $this->updateCompletionEvent($cm);
+    }
+
+    /**
+     * Sync the "expect completed on" event of a course module with its completionexpected date.
+     *
+     * @param \stdClass $cm course module, as returned by get_coursemodule_from_*()
+     */
+    private function updateCompletionEvent($cm) {
+        global $DB;
+
+        $completionexpected = $DB->get_field('course_modules', 'completionexpected',
+                array('id' => $cm->id));
+        // A null date deletes the event, which is what we want when no date is set.
+        \core_completion\api::update_completion_date_event($cm->id, $cm->modname, $cm->instance,
+                $completionexpected ? (int)$completionexpected : null);
+        echo "OK - Set expected completion event of course module {$cm->id} to '{$completionexpected}'\n";
     }
 
     protected function getArgumentsHelp()
